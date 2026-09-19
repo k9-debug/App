@@ -157,9 +157,9 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
                 rr_ratio >= req_min_rr):
                 
                 results.append({
-                    "股票代號": stock_id,
-                    "股票名稱": name,
-                    "連結": tech_chart_url,
+                    "股票代號": tech_chart_url,  # 將網址存於此欄位，交由 LinkColumn 呈現
+                    "股票代號_顯示": stock_id,    # 純號碼備用
+                    "股票名稱": name,           # 純中文名稱
                     "當前價": close_price,
                     "易經卦象": hexagram_str,
                     "預估盈虧比": f"{rr_ratio} : 1",
@@ -184,21 +184,20 @@ with st.spinner('正在計算籌碼、盈虧比與易經卦象中...'):
 if not df.empty:
     st.success(f"篩選完成！共找到 {len(df)} 檔標的：")
     
-    # 使用 LinkColumn 將股票名稱欄位顯示為中文，並綁定連結欄位
     st.dataframe(
         df,
         column_config={
-            "連結": None,  # 隱藏純網址欄位
-            "股票名稱": st.column_config.LinkColumn(
-                "股票名稱",
-                help="點擊股票名稱開啟 Yahoo 股市 K 線圖",
-                validate=r"^https://",
-                display_text=r"https://tw\.stock\.yahoo\.com/quote/.*"
-            )
+            "股票代號_顯示": None,  # 隱藏輔助欄位
+            "股票代號": st.column_config.LinkColumn(
+                "股票代號",
+                help="點擊股票代號開啟 Yahoo 股市 K 線圖",
+                display_text=r"https://tw\.stock\.yahoo\.com/quote/(.*?)\.TW/technical-analysis"
+            ),
+            "股票名稱": st.column_config.TextColumn("股票名稱")  # 純文字顯示
         },
         use_container_width=True
     )
 else:
     st.warning("目前無符合篩選條件之標的。")
 
-st.info("💡 提示：點擊表格中的『股票名稱』即可直接開啟該個股的 Yahoo 股市技術分析與 K 線圖。")
+st.info("💡 提示：點擊表格中的『股票代號』即可直接開啟該個股的 Yahoo 股市技術分析與 K 線圖。")
