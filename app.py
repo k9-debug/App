@@ -158,7 +158,8 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
                 
                 results.append({
                     "股票代號": stock_id,
-                    "股票名稱": f"[{name}]({tech_chart_url})",  # Markdown 格式：[股票中文名](網址)
+                    "股票名稱": name,
+                    "連結": tech_chart_url,
                     "當前價": close_price,
                     "易經卦象": hexagram_str,
                     "預估盈虧比": f"{rr_ratio} : 1",
@@ -183,10 +184,19 @@ with st.spinner('正在計算籌碼、盈虧比與易經卦象中...'):
 if not df.empty:
     st.success(f"篩選完成！共找到 {len(df)} 檔標的：")
     
-    # 透過 st.write / Markdown 渲染超連結
-    st.write(
-        df.to_markdown(index=False),
-        unsafe_allow_html=True
+    # 使用 LinkColumn 將股票名稱欄位顯示為中文，並綁定連結欄位
+    st.dataframe(
+        df,
+        column_config={
+            "連結": None,  # 隱藏純網址欄位
+            "股票名稱": st.column_config.LinkColumn(
+                "股票名稱",
+                help="點擊股票名稱開啟 Yahoo 股市 K 線圖",
+                validate=r"^https://",
+                display_text=r"https://tw\.stock\.yahoo\.com/quote/.*"
+            )
+        },
+        use_container_width=True
     )
 else:
     st.warning("目前無符合篩選條件之標的。")
