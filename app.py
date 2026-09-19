@@ -6,7 +6,7 @@ import yfinance as yf
 
 st.set_page_config(page_title="台股籌碼沉澱龍頭股監控", page_icon="📈", layout="wide")
 
-st.title("📊 台股籌碼沉澱 / 大戶鎖碼龍頭股監控")
+st.title("📊 台股籌碼沉澱 / 大戶鎖碼龍頭股監控 ☯️")
 st.caption(f"最後更新時間：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
 # 側邊欄設定
@@ -15,7 +15,20 @@ min_market_cap = st.sidebar.number_input("最小市值 (億元)", value=500, ste
 institutional_days = st.sidebar.slider("法人連續買超天數 (至少)", 1, 5, 2)
 max_turnover = st.sidebar.slider("換手率上限 % (洗盤沉澱量縮)", 0.1, 5.0, 2.0, step=0.1)
 min_yield = st.sidebar.slider("最低殖利率 % (股利下檔防禦)", 0.0, 8.0, 0.0, step=0.5)
-min_rr_ratio = st.sidebar.slider("最低預估盈虧比 (風控過濾)", 1.0, 5.0, 2.0, step=0.5)
+min_rr_ratio = st.sidebar.slider("最低預估盈虧比 (風控過濾)", 1.0, 5.0, 1.0, step=0.5)
+
+def get_hexagram(turnover_rate, actual_buy_days, rr_ratio):
+    """根據籌碼與風控指標自動對應易經卦象"""
+    if actual_buy_days >= 4 and turnover_rate >= 1.0:
+        return "乾為天 ☰☰ (大戶強攻)"
+    elif turnover_rate < 0.8 and actual_buy_days >= 2:
+        return "地風升 ☷☴ (沉澱蓄勢)"
+    elif rr_ratio >= 2.0 and actual_buy_days >= 2:
+        return "雷天大壯 ☳☰ (風控極佳)"
+    elif rr_ratio < 1.5:
+        return "水山蹇 ☵☶ (空間受限)"
+    else:
+        return "坤為地 ☷☷ (量縮打底)"
 
 @st.cache_data(ttl=3600)
 def get_twse_institutional_data(days=5):
@@ -94,7 +107,6 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
     
     results = []
     tickers = list(dragon_stocks.keys())
-    # 抓取近 60 日數據計算前高與低點支撐
     data = yf.download(tickers, period="60d", interval="1d", progress=False)
     
     for symbol, name in dragon_stocks.items():
@@ -110,34 +122,31 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
             close_series = data['Close'][symbol].dropna()
             close_price = round(close_series.iloc[-1], 2)
             
-            # 停損價參考：近 20 日最低價
+            # 停損價與目標價
             stop_loss = round(close_series.tail(20).min(), 2)
-            # 目標價參考：近 60 日最高價
             target_price = round(close_series.max(), 2)
             
-            # 計算盈虧比 (Reward / Risk)
             risk = close_price - stop_loss
             reward = target_price - close_price
             
             if risk > 0:
                 rr_ratio = round(reward / risk, 2)
             else:
-                rr_ratio = 9.99 # 若剛好為最低價，無風險空間，設為優良值
+                rr_ratio = 9.99
                 
             volume = data['Volume'][symbol].dropna().iloc[-1]
             shares = info.get('sharesOutstanding', 0)
             
-            # 換手率 (%)
             turnover_rate = round((volume / shares) * 100, 2) if shares > 0 else 0.0
             
-            # 殖利率 (%)
             div_yield_raw = info.get('dividendYield', 0) or 0
             div_yield = round(div_yield_raw * 100, 2) if div_yield_raw < 1 else round(div_yield_raw, 2)
             
-            # 實際法人連買天數
             actual_buy_days = inst_buy_days.get(stock_id, 0)
             
-            # 綜合條件篩選
+            # 易經卦象計算
+            hexagram_str = get_hexagram(turnover_rate, actual_buy_days, rr_ratio)
+            
             if (market_cap_e >= min_cap and 
                 turnover_rate <= max_turnover_rate and 
                 actual_buy_days >= req_inst_days and
@@ -148,12 +157,13 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
                     "股票代號": stock_id,
                     "股票名稱": name,
                     "當前價": close_price,
-                    "參考停損 (20日低)": stop_loss,
-                    "參考目標 (60日高)": target_price,
+                    "易經卦象": hexagram_str,
                     "預估盈虧比": f"{rr_ratio} : 1",
                     "換手率 (%)": f"{turnover_rate}%",
-                    "殖利率 (%)": f"{div_yield}%",
                     "三大法人動向": f"連買 {actual_buy_days} 天",
+                    "參考停損 (20日低)": stop_loss,
+                    "參考目標 (60日高)": target_price,
+                    "殖利率 (%)": f"{div_yield}%",
                     "市值 (億)": market_cap_e
                 })
         except Exception:
@@ -161,16 +171,16 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
             
     return pd.DataFrame(results)
 
-if st.button("🔄 立即刷新籌碼與風控數據"):
+if st.button("🔄 立即刷新籌碼、風控與卦象"):
     st.cache_data.clear()
 
-with st.spinner('正在計算證交所法人買賣超、換手率與盈虧比中...'):
+with st.spinner('正在計算籌碼、盈虧比與易經卦象中...'):
     df = get_real_market_data(min_market_cap, institutional_days, max_turnover, min_yield, min_rr_ratio)
 
 if not df.empty:
-    st.success(f"篩選完成！共找到 {len(df)} 檔優質風控 / 沉澱龍頭標的：")
+    st.success(f"篩選完成！共找到 {len(df)} 檔標的：")
     st.dataframe(df, use_container_width=True)
 else:
-    st.warning("目前無符合所有風控與沉澱條件之標的，請嘗試調降「最低預估盈虧比」或放寬「換手率上限」。")
+    st.warning("目前無符合篩選條件之標的。")
 
-st.info("💡 盈虧比計算公式：（60日最高價 - 當前價）/（當前價 - 20日最低價）。盈虧比建議保持在 2.0 以上。")
+st.info("💡 卦象說明：『地風升』代表低換手蓄勢沉澱；『雷天大壯』代表風控盈虧比佳；『水山蹇』代表上檔空間受限。")
