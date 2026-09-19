@@ -4,6 +4,7 @@ import datetime
 import requests
 import yfinance as yf
 
+# 頁面配置
 st.set_page_config(page_title="台股籌碼沉澱龍頭股監控", page_icon="📈", layout="wide")
 
 st.title("📊 台股籌碼沉澱 / 大戶鎖碼龍頭股監控 ☯️")
@@ -115,14 +116,11 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
             stock = yf.Ticker(symbol)
             info = stock.info
             
-            # 市值 (億元)
             market_cap_e = round(info.get('marketCap', 0) / 100000000, 1)
             
-            # 收盤價與歷史區間
             close_series = data['Close'][symbol].dropna()
             close_price = round(close_series.iloc[-1], 2)
             
-            # 停損價與目標價
             stop_loss = round(close_series.tail(20).min(), 2)
             target_price = round(close_series.max(), 2)
             
@@ -143,11 +141,8 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
             div_yield = round(div_yield_raw * 100, 2) if div_yield_raw < 1 else round(div_yield_raw, 2)
             
             actual_buy_days = inst_buy_days.get(stock_id, 0)
-            
-            # 易經卦象計算
             hexagram_str = get_hexagram(turnover_rate, actual_buy_days, rr_ratio)
             
-            # Yahoo 股市 K 線圖網址
             tech_chart_url = f"https://tw.stock.yahoo.com/quote/{stock_id}.TW/technical-analysis"
             
             if (market_cap_e >= min_cap and 
@@ -157,12 +152,11 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
                 rr_ratio >= req_min_rr):
                 
                 results.append({
-                    "股票代號": tech_chart_url,  # 將網址存於此欄位，交由 LinkColumn 呈現
-                    "股票代號_顯示": stock_id,    # 純號碼備用
-                    "股票名稱": name,           # 純中文名稱
+                    "股票代號": tech_chart_url,
+                    "股票名稱": name,
                     "當前價": close_price,
+                    "預估盈虧比": rr_ratio,
                     "易經卦象": hexagram_str,
-                    "預估盈虧比": f"{rr_ratio} : 1",
                     "換手率 (%)": f"{turnover_rate}%",
                     "三大法人動向": f"連買 {actual_buy_days} 天",
                     "參考停損 (20日低)": stop_loss,
@@ -175,29 +169,60 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
             
     return pd.DataFrame(results)
 
-if st.button("🔄 立即刷新籌碼、風控與卦象"):
-    st.cache_data.clear()
+# 刷新按鈕區域
+col_btn, col_blank = st.columns([1, 4])
+with col_btn:
+    if st.button("🔄 刷新最新籌碼數據", use_container_width=True):
+        st.cache_data.clear()
 
-with st.spinner('正在計算籌碼、盈虧比與易經卦象中...'):
+with st.spinner('正在計算證交所數據、盈虧比與易經卦象中...'):
     df = get_real_market_data(min_market_cap, institutional_days, max_turnover, min_yield, min_rr_ratio)
 
 if not df.empty:
-    st.success(f"篩選完成！共找到 {len(df)} 檔標的：")
+    # 頂部關鍵數據指標卡片
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("符合沉澱標的", f"{len(df)} 檔")
+    avg_rr = round(df['預估盈虧比'].mean(), 2)
+    m2.metric("平均預估盈虧比", f"{avg_rr} : 1")
     
+    # 解析殖利率平均值
+    yield_values = [float(x.replace('%', '')) for x in df['殖利率 (%)']]
+    avg_yield = round(sum(yield_values) / len(yield_values), 2)
+    m3.metric("平均股息殖利率", f"{avg_yield}%")
+    m4.metric("監控模式", "籌碼鎖碼 + 易經指示")
+    
+    st.markdown("---")
+    
+    # 表格欄位格式化（格式化盈虧比欄位，並隱藏行索引 0,1,2,3）
     st.dataframe(
         df,
         column_config={
-            "股票代號_顯示": None,  # 隱藏輔助欄位
             "股票代號": st.column_config.LinkColumn(
-                "股票代號",
-                help="點擊股票代號開啟 Yahoo 股市 K 線圖",
+                "股票代號 🔗",
+                help="點擊代號開啟 Yahoo 股市技術分析圖",
                 display_text=r"https://tw\.stock\.yahoo\.com/quote/(.*?)\.TW/technical-analysis"
             ),
-            "股票名稱": st.column_config.TextColumn("股票名稱")  # 純文字顯示
+            "股票名稱": st.column_config.TextColumn("股票名稱"),
+            "預估盈虧比": st.column_config.NumberColumn(
+                "預估盈虧比",
+                format="%.2f : 1"
+            ),
+            "當前價": st.column_config.NumberColumn("當前價", format="$%.2f"),
+            "參考停損 (20日低)": st.column_config.NumberColumn("參考停損 (20日低)", format="$%.2f"),
+            "參考目標 (60日高)": st.column_config.NumberColumn("參考目標 (60日高)", format="$%.2f")
         },
+        hide_index=True,
         use_container_width=True
     )
+    
+    # 說明摺疊區塊（節省空間）
+    with st.expander("💡 觀看使用說明與易經卦象解讀"):
+        st.write("""
+        * **股票代號連結**：點擊藍色股票代號可直接開啟 Yahoo 股市 K 線圖。
+        * **地風升 ☷☴**：低換手量縮，籌碼極度沉澱，蓄勢待發。
+        * **雷天大壯 ☳☰**：盈虧比 $> 2.0$，具備極佳的下檔防禦與上檔獲利空間。
+        * **水山蹇 ☵☶**：盈虧比 $< 1.5$，代表離前高太近或停損點太遠，宜靜觀其變。
+        * **乾為天 ☰☰**：法人連買 4 天以上且換手率提升，大戶強勢鎖碼發動。
+        """)
 else:
-    st.warning("目前無符合篩選條件之標的。")
-
-st.info("💡 提示：點擊表格中的『股票代號』即可直接開啟該個股的 Yahoo 股市技術分析與 K 線圖。")
+    st.warning("目前無符合篩選條件之標的，請放寬側邊欄的風控或換手率門檻。")
