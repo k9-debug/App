@@ -147,7 +147,7 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
             # 易經卦象計算
             hexagram_str = get_hexagram(turnover_rate, actual_buy_days, rr_ratio)
             
-            # 生成 Yahoo 股市 K 線分析頁面網址
+            # Yahoo 股市 K 線圖表網址
             tech_chart_url = f"https://tw.stock.yahoo.com/quote/{stock_id}.TW/technical-analysis"
             
             if (market_cap_e >= min_cap and 
@@ -158,8 +158,7 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
                 
                 results.append({
                     "股票代號": stock_id,
-                    "股票名稱": name,
-                    "技術分析": tech_chart_url,
+                    "股票名稱": tech_chart_url,  # 存放網址，透由 column_config 顯示為股名
                     "當前價": close_price,
                     "易經卦象": hexagram_str,
                     "預估盈虧比": f"{rr_ratio} : 1",
@@ -168,7 +167,8 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
                     "參考停損 (20日低)": stop_loss,
                     "參考目標 (60日高)": target_price,
                     "殖利率 (%)": f"{div_yield}%",
-                    "市值 (億)": market_cap_e
+                    "市值 (億)": market_cap_e,
+                    "_raw_name": name  # 輔助對照用
                 })
         except Exception:
             continue
@@ -178,20 +178,33 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
 if st.button("🔄 立即刷新籌碼、風控與卦象"):
     st.cache_data.clear()
 
-with st.spinner('正在計算籌碼、盈虧比、易經卦象與網頁捷徑中...'):
+with st.spinner('正在計算籌碼、盈虧比與易經卦象中...'):
     df = get_real_market_data(min_market_cap, institutional_days, max_turnover, min_yield, min_rr_ratio)
 
 if not df.empty:
     st.success(f"篩選完成！共找到 {len(df)} 檔標的：")
     
-    # 使用 column_config 將網址轉換為漂亮的點擊按鈕/連結
+    # 建立股票代號對應股票名稱的字典
+    dragon_stocks_dict = {
+        "2330": "台積電", "2454": "聯發科", "2303": "聯電", "3034": "聯詠", "2379": "瑞昱", 
+        "3035": "智原", "3443": "創意", "3661": "世芯-KY", "2317": "鴻海", "2382": "廣達", 
+        "3231": "緯創", "2356": "英業達", "6669": "緯穎", "2301": "光寶科", "2357": "華碩", 
+        "2324": "仁寶", "3017": "奇鋐", "3324": "雙鴻", "2383": "台光電", "3037": "欣興", 
+        "8046": "南電", "3189": "景碩", "2308": "台達電", "1519": "華城", "1513": "中興電", 
+        "1504": "東元", "1503": "士電", "2345": "智邦", "2327": "國巨", "2408": "南亞科", 
+        "3008": "大立光", "2881": "富邦金", "2882": "國泰金", "2891": "中信金", "2603": "長榮"
+    }
+
+    # 隱藏輔助欄位，並將「股票名稱」設為點擊超連結
+    display_df = df.drop(columns=["_raw_name"])
+    
     st.dataframe(
-        df,
+        display_df,
         column_config={
-            "技術分析": st.column_config.LinkColumn(
-                "技術分析捷徑",
-                help="點擊開啟 Yahoo 股市 K 線圖表",
-                display_text="📈 看 K 線"
+            "股票名稱": st.column_config.LinkColumn(
+                "股票名稱",
+                help="點擊股票名稱即可開啟技術分析 K 線圖",
+                display_text=r"https://tw\.stock\.yahoo\.com/quote/(.*?)\.TW/technical-analysis"
             )
         },
         use_container_width=True
@@ -199,4 +212,4 @@ if not df.empty:
 else:
     st.warning("目前無符合篩選條件之標的。")
 
-st.info("💡 提示：點擊表格中的『📈 看 K 線』可直接在瀏覽器彈出該股的即時技術分析與 K 線圖。")
+st.info("💡 提示：點擊表格中的『股票名稱』即可直接開啟該個股的 Yahoo 股市技術分析與 K 線圖。")
