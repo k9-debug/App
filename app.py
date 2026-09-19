@@ -147,6 +147,9 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
             # 易經卦象計算
             hexagram_str = get_hexagram(turnover_rate, actual_buy_days, rr_ratio)
             
+            # 生成 Yahoo 股市 K 線分析頁面網址
+            tech_chart_url = f"https://tw.stock.yahoo.com/quote/{stock_id}.TW/technical-analysis"
+            
             if (market_cap_e >= min_cap and 
                 turnover_rate <= max_turnover_rate and 
                 actual_buy_days >= req_inst_days and
@@ -156,6 +159,7 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
                 results.append({
                     "股票代號": stock_id,
                     "股票名稱": name,
+                    "技術分析": tech_chart_url,
                     "當前價": close_price,
                     "易經卦象": hexagram_str,
                     "預估盈虧比": f"{rr_ratio} : 1",
@@ -174,13 +178,25 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
 if st.button("🔄 立即刷新籌碼、風控與卦象"):
     st.cache_data.clear()
 
-with st.spinner('正在計算籌碼、盈虧比與易經卦象中...'):
+with st.spinner('正在計算籌碼、盈虧比、易經卦象與網頁捷徑中...'):
     df = get_real_market_data(min_market_cap, institutional_days, max_turnover, min_yield, min_rr_ratio)
 
 if not df.empty:
     st.success(f"篩選完成！共找到 {len(df)} 檔標的：")
-    st.dataframe(df, use_container_width=True)
+    
+    # 使用 column_config 將網址轉換為漂亮的點擊按鈕/連結
+    st.dataframe(
+        df,
+        column_config={
+            "技術分析": st.column_config.LinkColumn(
+                "技術分析捷徑",
+                help="點擊開啟 Yahoo 股市 K 線圖表",
+                display_text="📈 看 K 線"
+            )
+        },
+        use_container_width=True
+    )
 else:
     st.warning("目前無符合篩選條件之標的。")
 
-st.info("💡 卦象說明：『地風升』代表低換手蓄勢沉澱；『雷天大壯』代表風控盈虧比佳；『水山蹇』代表上檔空間受限。")
+st.info("💡 提示：點擊表格中的『📈 看 K 線』可直接在瀏覽器彈出該股的即時技術分析與 K 線圖。")
