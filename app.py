@@ -9,27 +9,27 @@ st.set_page_config(page_title="台股籌碼沉澱龍頭股監控", page_icon="�
 st.title("📊 台股籌碼沉澱 / 大戶鎖碼龍頭股監控")
 st.caption(f"最後更新時間：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
+# 側邊欄設定
 st.sidebar.header("選股條件設定")
 min_market_cap = st.sidebar.number_input("最小市值 (億元)", value=500, step=100)
 institutional_days = st.sidebar.slider("法人連續買超天數 (至少)", 1, 5, 2)
 max_turnover = st.sidebar.slider("換手率上限 % (洗盤沉澱量縮)", 0.1, 5.0, 2.0, step=0.1)
+min_yield = st.sidebar.slider("最低殖利率 % (股利下檔防禦)", 0.0, 8.0, 0.0, step=0.5)
 
 @st.cache_data(ttl=3600)
 def get_twse_institutional_data(days=5):
     """抓取證交所近 N 個交易日的三大法人買賣超資料"""
-    inst_data = {} # {stock_id: consecutive_buy_days}
+    inst_data = {}
     today = datetime.date.today()
     fetched_days = 0
     check_date = today
     
     headers = {'User-Agent': 'Mozilla/5.0'}
-    daily_buy_records = {} # {stock_id: [day1_net, day2_net, ...]}
+    daily_buy_records = {}
 
-    # 往前搜尋近 10 天，找足交易日
     for _ in range(12):
         if fetched_days >= days:
             break
-        # 跳過週末
         if check_date.weekday() >= 5:
             check_date -= datetime.timedelta(days=1)
             continue
@@ -44,7 +44,6 @@ def get_twse_institutional_data(days=5):
                 fetched_days += 1
                 for row in data["data"]:
                     stock_id = row[0].strip()
-                    # 三大法人買賣超股數 (欄位 18)
                     try:
                         net_buy = int(row[18].replace(',', ''))
                     except ValueError:
@@ -58,7 +57,6 @@ def get_twse_institutional_data(days=5):
             
         check_date -= datetime.timedelta(days=1)
         
-    # 計算連買天數
     for stock_id, records in daily_buy_records.items():
         consecutive = 0
         for net in records:
@@ -71,7 +69,7 @@ def get_twse_institutional_data(days=5):
     return inst_data
 
 @st.cache_data(ttl=3600)
-def get_real_market_data(min_cap, req_inst_days, max_turnover_rate):
+def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yield):
     dragon_stocks = {
         # 半導體 / 代工 / IC設計
         "2330.TW": "台積電", "2454.TW": "聯發科", "2303.TW": "聯電", "3034.TW": "聯詠", 
@@ -91,7 +89,6 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate):
         "2881.TW": "富邦金", "2882.TW": "國泰金", "2891.TW": "中信金", "2603.TW": "長榮"
     }
     
-    # 取得法人連買資料
     inst_buy_days = get_twse_institutional_data(days=5)
     
     results = []
@@ -115,18 +112,28 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate):
             # 換手率 (%)
             turnover_rate = round((volume / shares) * 100, 2) if shares > 0 else 0.0
             
+            # 殖利率 (%)
+            div_yield_raw = info.get('dividendYield', 0) or 0
+            # yfinance 的 dividendYield 有時以小數表示 (0.05 代表 5%)
+            div_yield = round(div_yield_raw * 100, 2) if div_yield_raw < 1 else round(div_yield_raw, 2)
+            
             # 實際法人連買天數
             actual_buy_days = inst_buy_days.get(stock_id, 0)
             
-            # 嚴格條件對齊篩選：市值 + 換手率 + 法人實際連買天數
-            if market_cap_e >= min_cap and turnover_rate <= max_turnover_rate and actual_buy_days >= req_inst_days:
+            # 綜合條件篩選
+            if (market_cap_e >= min_cap and 
+                turnover_rate <= max_turnover_rate and 
+                actual_buy_days >= req_inst_days and
+                div_yield >= req_min_yield):
+                
                 results.append({
                     "股票代號": stock_id,
                     "股票名稱": name,
                     "收盤價": close_price,
                     "市值 (億)": market_cap_e,
+                    "殖利率 (%)": f"{div_yield}%",
                     "換手率 (%)": f"{turnover_rate}%",
-                    "三大法人實際動向": f"連續買超 {actual_buy_days} 天",
+                    "三大法人動向": f"連買 {actual_buy_days} 天",
                     "千張大戶持股%": "週增 (集保)",
                     "10張以下散戶": "遞減"
                 })
@@ -135,16 +142,16 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate):
             
     return pd.DataFrame(results)
 
-if st.button("🔄 立即刷新籌碼數據"):
+if st.button("🔄 立即刷新籌碼與殖利率數據"):
     st.cache_data.clear()
 
-with st.spinner('正在連線證交所與 yfinance 計算真實籌碼中...'):
-    df = get_real_market_data(min_market_cap, institutional_days, max_turnover)
+with st.spinner('正在計算證交所法人買賣超與殖利率數據中...'):
+    df = get_real_market_data(min_market_cap, institutional_days, max_turnover, min_yield)
 
 if not df.empty:
     st.success(f"篩選完成！共找到 {len(df)} 檔符合條件之龍頭標的：")
     st.dataframe(df, use_container_width=True)
 else:
-    st.warning("目前無同時符合「市值、換手率上限與法人連買天數」之標的，請嘗試放寬條件。")
+    st.warning("目前無符合篩選條件（市值、換手率、法人連買與殖利率）之標的，請放寬條件。")
 
-st.info("💡 說明：法人買賣超資料直接對接證交所每日盤後 T86 報表真實計算。")
+st.info("💡 說明：殖利率由最新股利發放計算；三大法人買賣超直接抓取證交所盤後數據。")
