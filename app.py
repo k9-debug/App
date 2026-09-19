@@ -84,41 +84,26 @@ def get_twse_institutional_data(days=5):
     return inst_data
 
 @st.cache_data(ttl=3600)
-def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yield, req_min_rr):
-    dragon_stocks = {
-        # 半導體 / 代工 / IC設計
-        "2330.TW": "台積電", "2454.TW": "聯發科", "2303.TW": "聯電", "3034.TW": "聯詠", 
-        "2379.TW": "瑞昱", "3035.TW": "智原", "3443.TW": "創意", "3661.TW": "世芯-KY",
-        # AI / 伺服器 / 電子代工
-        "2317.TW": "鴻海", "2382.TW": "廣達", "3231.TW": "緯創", "2356.TW": "英業達", 
-        "6669.TW": "緯穎", "2301.TW": "光寶科", "2357.TW": "華碩", "2324.TW": "仁寶",
-        # 散熱 / CCL / PCB / 載板
-        "3017.TW": "奇鋐", "3324.TW": "雙鴻", "2383.TW": "台光電", "3037.TW": "欣興", 
-        "8046.TW": "南電", "3189.TW": "景碩",
-        # 電源 / 重電 / 綠能
-        "2308.TW": "台達電", "1519.TW": "華城", "1513.TW": "中興電", "1504.TW": "東元", 
-        "1503.TW": "士電",
-        # 網通 / 被動元件 / 其他關鍵零組件
-        "2345.TW": "智邦", "2327.TW": "國巨", "2408.TW": "南亞科", "3008.TW": "大立光",
-        # 金融 / 航運傳產龍頭
-        "2881.TW": "富邦金", "2882.TW": "國泰金", "2891.TW": "中信金", "2603.TW": "長榮"
-    }
-    
-    inst_buy_days = get_twse_institutional_data(days=5)
-    
+def get_stock_analysis_data(stock_dict, inst_buy_days, is_watchlist=False, min_cap=0, req_inst_days=0, max_turnover_rate=99, req_min_yield=0, req_min_rr=0):
+    """計算股票清單的詳細技術、籌碼與風控數據"""
     results = []
-    tickers = list(dragon_stocks.keys())
+    tickers = list(stock_dict.keys())
     data = yf.download(tickers, period="60d", interval="1d", progress=False)
     
-    for symbol, name in dragon_stocks.items():
+    for symbol, name in stock_dict.items():
         stock_id = symbol.replace(".TW", "")
         try:
             stock = yf.Ticker(symbol)
             info = stock.info
             
-            market_cap_e = round(info.get('marketCap', 0) / 100000000, 1)
+            # 市值計算 (億元或美元)
+            raw_cap = info.get('marketCap', 0)
+            if ".TW" in symbol:
+                market_cap_e = round(raw_cap / 100000000, 1)
+            else:
+                market_cap_e = round(raw_cap / 100000000, 1) # 美股億美元
             
-            close_series = data['Close'][symbol].dropna()
+            close_series = data['Close'][symbol].dropna() if len(tickers) > 1 else data['Close'].dropna()
             close_price = round(close_series.iloc[-1], 2)
             
             stop_loss = round(close_series.tail(20).min(), 2)
@@ -132,7 +117,8 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
             else:
                 rr_ratio = 9.99
                 
-            volume = data['Volume'][symbol].dropna().iloc[-1]
+            volume_series = data['Volume'][symbol].dropna() if len(tickers) > 1 else data['Volume'].dropna()
+            volume = volume_series.iloc[-1]
             shares = info.get('sharesOutstanding', 0)
             
             turnover_rate = round((volume / shares) * 100, 2) if shares > 0 else 0.0
@@ -140,17 +126,25 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
             div_yield_raw = info.get('dividendYield', 0) or 0
             div_yield = round(div_yield_raw * 100, 2) if div_yield_raw < 1 else round(div_yield_raw, 2)
             
-            actual_buy_days = inst_buy_days.get(stock_id, 0)
+            actual_buy_days = inst_buy_days.get(stock_id, 0) if ".TW" in symbol else 0
+            inst_str = f"連買 {actual_buy_days} 天" if ".TW" in symbol else "N/A (美股)"
+            
             hexagram_str = get_hexagram(turnover_rate, actual_buy_days, rr_ratio)
             
-            tech_chart_url = f"https://tw.stock.yahoo.com/quote/{stock_id}.TW/technical-analysis"
+            # K 線圖連結
+            if ".TW" in symbol:
+                tech_chart_url = f"https://tw.stock.yahoo.com/quote/{stock_id}.TW/technical-analysis"
+            else:
+                tech_chart_url = f"https://finance.yahoo.com/quote/{symbol}/chart"
             
-            if (market_cap_e >= min_cap and 
+            # 若為自選股，直接加入；若為策略選股，通過濾網
+            if is_watchlist or (
+                market_cap_e >= min_cap and 
                 turnover_rate <= max_turnover_rate and 
                 actual_buy_days >= req_inst_days and
                 div_yield >= req_min_yield and
-                rr_ratio >= req_min_rr):
-                
+                rr_ratio >= req_min_rr
+            ):
                 results.append({
                     "股票代號": tech_chart_url,
                     "股票名稱": name,
@@ -158,7 +152,7 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
                     "預估盈虧比": rr_ratio,
                     "易經卦象": hexagram_str,
                     "換手率 (%)": f"{turnover_rate}%",
-                    "三大法人動向": f"連買 {actual_buy_days} 天",
+                    "三大法人動向": inst_str,
                     "參考停損 (20日低)": stop_loss,
                     "參考目標 (60日高)": target_price,
                     "殖利率 (%)": f"{div_yield}%",
@@ -169,44 +163,63 @@ def get_real_market_data(min_cap, req_inst_days, max_turnover_rate, req_min_yiel
             
     return pd.DataFrame(results)
 
+# 龍頭股清單
+dragon_stocks = {
+    "2330.TW": "台積電", "2454.TW": "聯發科", "2303.TW": "聯電", "3034.TW": "聯詠", 
+    "2379.TW": "瑞昱", "3035.TW": "智原", "3443.TW": "創意", "3661.TW": "世芯-KY",
+    "2317.TW": "鴻海", "2382.TW": "廣達", "3231.TW": "緯創", "2356.TW": "英業達", 
+    "6669.TW": "緯穎", "2301.TW": "光寶科", "2357.TW": "華碩", "2324.TW": "仁寶",
+    "3017.TW": "奇鋐", "3324.TW": "雙鴻", "2383.TW": "台光電", "3037.TW": "欣興", 
+    "8046.TW": "南電", "3189.TW": "景碩", "2308.TW": "台達電", "1519.TW": "華城", 
+    "1513.TW": "中興電", "1504.TW": "東元", "1503.TW": "士電", "2345.TW": "智邦", 
+    "2327.TW": "國巨", "2408.TW": "南亞科", "3008.TW": "大立光", "2881.TW": "富邦金", 
+    "2882.TW": "國泰金", "2891.TW": "中信金", "2603.TW": "長榮"
+}
+
+# 自訂觀察股清單
+watchlist_stocks = {
+    "1722.TW": "台肥",
+    "2412.TW": "中華電",
+    "2017.TW": "官田鋼",
+    "3711.TW": "日月光投控",
+    "ASTS": "AST SpaceMobile"
+}
+
 # 刷新按鈕區域
 col_btn, col_blank = st.columns([1, 4])
 with col_btn:
-    if st.button("🔄 刷新最新籌碼數據", use_container_width=True):
+    if st.button("🔄 刷新最新籌碼與自選股數據", use_container_width=True):
         st.cache_data.clear()
 
 with st.spinner('正在計算證交所數據、盈虧比與易經卦象中...'):
-    df = get_real_market_data(min_market_cap, institutional_days, max_turnover, min_yield, min_rr_ratio)
+    inst_buy_days = get_twse_institutional_data(days=5)
+    df_strategy = get_stock_analysis_data(dragon_stocks, inst_buy_days, False, min_market_cap, institutional_days, max_turnover, min_yield, min_rr_ratio)
+    df_watchlist = get_stock_analysis_data(watchlist_stocks, inst_buy_days, True)
 
-if not df.empty:
-    # 頂部關鍵數據指標卡片
+# --- 區塊 1：策略篩選結果 ---
+st.subheader("📌 籌碼沉澱龍頭股篩選結果")
+
+if not df_strategy.empty:
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("符合沉澱標的", f"{len(df)} 檔")
-    avg_rr = round(df['預估盈虧比'].mean(), 2)
+    m1.metric("符合沉澱標的", f"{len(df_strategy)} 檔")
+    avg_rr = round(df_strategy['預估盈虧比'].mean(), 2)
     m2.metric("平均預估盈虧比", f"{avg_rr} : 1")
     
-    # 解析殖利率平均值
-    yield_values = [float(x.replace('%', '')) for x in df['殖利率 (%)']]
+    yield_values = [float(x.replace('%', '')) for x in df_strategy['殖利率 (%)']]
     avg_yield = round(sum(yield_values) / len(yield_values), 2)
     m3.metric("平均股息殖利率", f"{avg_yield}%")
     m4.metric("監控模式", "籌碼鎖碼 + 易經指示")
     
-    st.markdown("---")
-    
-    # 表格欄位格式化（格式化盈虧比欄位，並隱藏行索引 0,1,2,3）
     st.dataframe(
-        df,
+        df_strategy,
         column_config={
             "股票代號": st.column_config.LinkColumn(
                 "股票代號 🔗",
                 help="點擊代號開啟 Yahoo 股市技術分析圖",
-                display_text=r"https://tw\.stock\.yahoo\.com/quote/(.*?)\.TW/technical-analysis"
+                display_text=r"https://.*?/quote/(.*?)(?:\.TW)?(?:/technical-analysis|/chart)"
             ),
             "股票名稱": st.column_config.TextColumn("股票名稱"),
-            "預估盈虧比": st.column_config.NumberColumn(
-                "預估盈虧比",
-                format="%.2f : 1"
-            ),
+            "預估盈虧比": st.column_config.NumberColumn("預估盈虧比", format="%.2f : 1"),
             "當前價": st.column_config.NumberColumn("當前價", format="$%.2f"),
             "參考停損 (20日低)": st.column_config.NumberColumn("參考停損 (20日低)", format="$%.2f"),
             "參考目標 (60日高)": st.column_config.NumberColumn("參考目標 (60日高)", format="$%.2f")
@@ -214,15 +227,39 @@ if not df.empty:
         hide_index=True,
         use_container_width=True
     )
-    
-    # 說明摺疊區塊（節省空間）
-    with st.expander("💡 觀看使用說明與易經卦象解讀"):
-        st.write("""
-        * **股票代號連結**：點擊藍色股票代號可直接開啟 Yahoo 股市 K 線圖。
-        * **地風升 ☷☴**：低換手量縮，籌碼極度沉澱，蓄勢待發。
-        * **雷天大壯 ☳☰**：盈虧比 $> 2.0$，具備極佳的下檔防禦與上檔獲利空間。
-        * **水山蹇 ☵☶**：盈虧比 $< 1.5$，代表離前高太近或停損點太遠，宜靜觀其變。
-        * **乾為天 ☰☰**：法人連買 4 天以上且換手率提升，大戶強勢鎖碼發動。
-        """)
 else:
     st.warning("目前無符合篩選條件之標的，請放寬側邊欄的風控或換手率門檻。")
+
+st.markdown("---")
+
+# --- 區塊 2：獨立自訂觀察表 ---
+st.subheader("⭐ 個人重點股票觀察表 (自選股)")
+
+if not df_watchlist.empty:
+    st.dataframe(
+        df_watchlist,
+        column_config={
+            "股票代號": st.column_config.LinkColumn(
+                "股票代號 🔗",
+                help="點擊代號開啟 Yahoo 股市技術分析圖",
+                display_text=r"https://.*?/quote/(.*?)(?:\.TW)?(?:/technical-analysis|/chart)"
+            ),
+            "股票名稱": st.column_config.TextColumn("股票名稱"),
+            "預估盈虧比": st.column_config.NumberColumn("預估盈虧比", format="%.2f : 1"),
+            "當前價": st.column_config.NumberColumn("當前價", format="$%.2f"),
+            "參考停損 (20日低)": st.column_config.NumberColumn("參考停損 (20日低)", format="$%.2f"),
+            "參考目標 (60日高)": st.column_config.NumberColumn("參考目標 (60日高)", format="$%.2f")
+        },
+        hide_index=True,
+        use_container_width=True
+    )
+
+# 說明摺疊區塊
+with st.expander("💡 觀看使用說明與易經卦象解讀"):
+    st.write("""
+    * **股票代號連結**：點擊藍色股票代號可直接開啟 Yahoo 股市 K 線圖（美股導向 Yahoo Finance US）。
+    * **地風升 ☷☴**：低換手量縮，籌碼極度沉澱，蓄勢待發。
+    * **雷天大壯 ☳☰**：盈虧比 $> 2.0$，具備極佳的下檔防禦與上檔獲利空間。
+    * **水山蹇 ☵☶**：盈虧比 $< 1.5$，代表離前高太近或停損點太遠，宜靜觀其變。
+    * **乾為天 ☰☰**：法人連買 4 天以上且換手率提升，大戶強勢鎖碼發動。
+    """)
