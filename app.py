@@ -172,7 +172,7 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
             
             turnover_rate = round((volume / shares) * 100, 2) if shares > 0 else 0.0
             
-            # 💡 籌碼集中度正負值視覺高亮處理
+            # 💡 籌碼集中度正紅負綠色彩高亮 (台股習慣)
             if ".TW" in symbol or ".TWO" in symbol:
                 vol_5d_sum = volume_series.tail(5).sum()
                 net_buy_5d = inst_5d_sum.get(stock_id, 0)
@@ -182,9 +182,9 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
                     chip_concentration = 0.0
                 
                 if chip_concentration > 0:
-                    chip_conc_str = f"🔺 +{chip_concentration}%"
+                    chip_conc_str = f":red[🔺 +{chip_concentration}%]"
                 elif chip_concentration < 0:
-                    chip_conc_str = f"🔻 {chip_concentration}%"
+                    chip_conc_str = f":green[🔻 {chip_concentration}%]"
                 else:
                     chip_conc_str = "0.0%"
             else:
@@ -320,7 +320,7 @@ else:
 with st.expander("💡 觀看使用說明與易經卦象解讀"):
     st.write("""
     * **股票代號連結**：點擊藍色股票代號可直接開啟 Yahoo 股市 K 線圖。
-    * **籌碼集中度 (5日)**：`🔺 +X%` 代表大戶買超吸籌，`🔻 -X%` 代表大戶賣超調節。
+    * **籌碼集中度 (5日)**：`🔺 +X%` (紅字) 代表大戶買超吸籌，`🔻 -X%` (綠字) 代表大戶賣超調節[span_6](start_span)[span_6](end_span)[span_7](start_span)[span_7](end_span)[span_8](start_span)[span_8](end_span)。
     * **地風升 ☷☴**：低換手量縮，籌碼極度沉澱，蓄勢待發。
     * **雷天大壯 ☳☰**：盈虧比 $> 2.0$，具備極佳的下檔防禦與上檔獲利空間。
     * **水山蹇 ☵☶**：盈虧比 $< 1.5$，代表離前高太近或停損點太遠，宜靜觀其變。
