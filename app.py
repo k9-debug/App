@@ -19,12 +19,11 @@ min_yield = st.sidebar.slider("最低殖利率 % (股利下檔防禦)", 0.0, 8.0
 min_rr_ratio = st.sidebar.slider("最低預估盈虧比 (風控過濾)", 1.0, 5.0, 1.0, step=0.5)
 
 st.sidebar.markdown("---")
-st.sidebar.header("⭐ 自選股設定 (10 檔記憶清單)")
+st.sidebar.header("⭐ 自選股設定 (可輸入股名或代號)")
 
-# 預設自選股
-default_watchlist = ["1722", "2412", "2017", "3711", "ASTS", "", "", "", "", ""]
+# 預設自選股 (支援代號或中文股名)
+default_watchlist = ["台肥", "中華電", "官田鋼", "日月光投控", "ASTS", "", "", "", "", ""]
 
-# 使用 Session State 記憶輸入的股票，避免刷頁時消失
 if "user_watchlist" not in st.session_state:
     st.session_state.user_watchlist = default_watchlist
 
@@ -33,11 +32,11 @@ for i in range(10):
     val = st.sidebar.text_input(
         f"自選股 {i+1}", 
         value=st.session_state.user_watchlist[i],
-        key=f"watchlist_input_{i}"
-    ).strip().upper()
+        key=f"watchlist_input_{i}",
+        placeholder="例如：台積電 或 2330"
+    ).strip()
     raw_watchlist_inputs.append(val)
 
-# 同步更新 Session State
 st.session_state.user_watchlist = raw_watchlist_inputs
 
 def get_hexagram(turnover_rate, actual_buy_days, rr_ratio):
@@ -107,7 +106,7 @@ def get_twse_institutional_data(days=5):
         
     return inst_consecutive, inst_net_5d_sum
 
-# 內建台股對照字典
+# 內建雙向對照字典 (代號 <-> 股名)
 builtin_names = {
     "1722": "台肥", "2412": "中華電", "2017": "官田鋼", "3711": "日月光投控",
     "2330": "台積電", "2454": "聯發科", "2303": "聯電", "3034": "聯詠", "2379": "瑞昱", 
@@ -119,20 +118,32 @@ builtin_names = {
     "3008": "大立光", "2881": "富邦金", "2882": "國泰金", "2891": "中信金", "2603": "長榮"
 }
 
+# 建立反向對照表 (股名 -> 代號)
+name_to_code = {v: k for k, v in builtin_names.items()}
+
 def format_symbol_dict(symbol_list):
-    """解析輸入的股票代號字串，自動補全 .TW/.TWO 並對應名稱"""
+    """解析輸入的字串 (可為中文股名、數字代號或英文美股)"""
     formatted_dict = {}
     otc_stocks = ["3324", "3131", "3583", "8069", "6488", "8299"]
     for item in symbol_list:
         if not item:
             continue
-        code = item.replace(".TW", "").replace(".TWO", "").strip()
-        if code.isdigit():
+        
+        # 1. 先判斷是否為中文股名 (在反向字典中)
+        if item in name_to_code:
+            code = name_to_code[item]
+            yf_symbol = f"{code}.TWO" if code in otc_stocks else f"{code}.TW"
+            name = item
+        # 2. 若為數字代號
+        elif item.replace(".TW", "").replace(".TWO", "").strip().isdigit():
+            code = item.replace(".TW", "").replace(".TWO", "").strip()
             yf_symbol = f"{code}.TWO" if code in otc_stocks else f"{code}.TW"
             name = builtin_names.get(code, f"台股 {code}")
+        # 3. 英文代號 (美股等)
         else:
-            yf_symbol = code
-            name = code
+            yf_symbol = item.upper()
+            name = item.upper()
+            
         formatted_dict[yf_symbol] = name
     return formatted_dict
 
@@ -179,7 +190,6 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
             
             turnover_rate = round((volume / shares) * 100, 2) if shares > 0 else 0.0
             
-            # 💡 表格純文字直覺相容標記（正值 🔺+，負值 🔻-）
             if ".TW" in symbol or ".TWO" in symbol:
                 vol_5d_sum = volume_series.tail(5).sum()
                 net_buy_5d = inst_5d_sum.get(stock_id, 0)
@@ -322,11 +332,12 @@ if not df_watchlist.empty:
         width="stretch"
     )
 else:
-    st.info("請於左側側邊欄『⭐ 自選股設定』輸入想觀察的股票代號。")
+    st.info("請於左側側邊欄『⭐ 自選股設定』輸入想觀察的股票代號或中文股名。")
 
 with st.expander("💡 觀看使用說明與易經卦象解讀"):
     st.write("""
     * **股票代號連結**：點擊藍色股票代號可直接開啟 Yahoo 股市 K 線圖。
+    * **自選股設定**：可直接輸入中文股名（如：台積電、鴻海）或數字/英文代號（如：2330、NVDA）[span_8](start_span)[span_8](end_span)[span_9](start_span)[span_9](end_span)。
     * **籌碼集中度 (5日)**：`🔺 +X%` 代表大戶買超吸籌，`🔻 -X%` 代表大戶賣超調節。
     * **地風升 ☷☴**：低換手量縮，籌碼極度沉澱，蓄勢待發。
     * **雷天大壯 ☳☰**：盈虧比 $> 2.0$，具備極佳的下檔防禦與上檔獲利空間。
