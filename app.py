@@ -90,18 +90,18 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, is_watchlist=False, min_c
     tickers = list(stock_dict.keys())
     data = yf.download(tickers, period="60d", interval="1d", progress=False)
     
+    today = datetime.datetime.now()
+    one_year_ago = today - datetime.timedelta(days=365)
+    
     for symbol, name in stock_dict.items():
         stock_id = symbol.replace(".TW", "")
         try:
             stock = yf.Ticker(symbol)
             info = stock.info
             
-            # 市值計算 (億元或美元)
+            # 市值計算 (億元)
             raw_cap = info.get('marketCap', 0)
-            if ".TW" in symbol:
-                market_cap_e = round(raw_cap / 100000000, 1)
-            else:
-                market_cap_e = round(raw_cap / 100000000, 1) # 美股億美元
+            market_cap_e = round(raw_cap / 100000000, 1)
             
             close_series = data['Close'][symbol].dropna() if len(tickers) > 1 else data['Close'].dropna()
             close_price = round(close_series.iloc[-1], 2)
@@ -123,8 +123,22 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, is_watchlist=False, min_c
             
             turnover_rate = round((volume / shares) * 100, 2) if shares > 0 else 0.0
             
-            div_yield_raw = info.get('dividendYield', 0) or 0
-            div_yield = round(div_yield_raw * 100, 2) if div_yield_raw < 1 else round(div_yield_raw, 2)
+            # 💡 精準殖利率計算：抓取過去 365 天真實配息紀錄累加，避免 API 異常
+            try:
+                divs = stock.dividends
+                if not divs.empty:
+                    # 篩選出近一年的配息記錄
+                    recent_divs = divs[divs.index >= pd.Timestamp(one_year_ago, tz=divs.index.tz)]
+                    annual_div_sum = recent_divs.sum()
+                    div_yield = round((annual_div_sum / close_price) * 100, 2)
+                else:
+                    div_yield = 0.0
+            except Exception:
+                div_yield = 0.0
+                
+            # 極端異常值保護（防止未預期的數據錯誤）
+            if div_yield > 15.0:
+                div_yield = round(info.get('trailingAnnualDividendYield', 0) * 100, 2)
             
             actual_buy_days = inst_buy_days.get(stock_id, 0) if ".TW" in symbol else 0
             inst_str = f"連買 {actual_buy_days} 天" if ".TW" in symbol else "N/A (美股)"
@@ -137,7 +151,7 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, is_watchlist=False, min_c
             else:
                 tech_chart_url = f"https://finance.yahoo.com/quote/{symbol}/chart"
             
-            # 若為自選股，直接加入；若為策略選股，通過濾網
+            # 篩選邏輯
             if is_watchlist or (
                 market_cap_e >= min_cap and 
                 turnover_rate <= max_turnover_rate and 
@@ -254,10 +268,9 @@ if not df_watchlist.empty:
         use_container_width=True
     )
 
-# 說明摺疊區塊
 with st.expander("💡 觀看使用說明與易經卦象解讀"):
     st.write("""
-    * **股票代號連結**：點擊藍色股票代號可直接開啟 Yahoo 股市 K 線圖（美股導向 Yahoo Finance US）。
+    * **股票代號連結**：點擊藍色股票代號可直接開啟 Yahoo 股市 K 線圖。
     * **地風升 ☷☴**：低換手量縮，籌碼極度沉澱，蓄勢待發。
     * **雷天大壯 ☳☰**：盈虧比 $> 2.0$，具備極佳的下檔防禦與上檔獲利空間。
     * **水山蹇 ☵☶**：盈虧比 $< 1.5$，代表離前高太近或停損點太遠，宜靜觀其變。
