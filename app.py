@@ -115,7 +115,7 @@ builtin_names = {
 def format_symbol_dict(symbol_list):
     """解析輸入的股票代號字串，自動補全 .TW/.TWO 並對應名稱"""
     formatted_dict = {}
-    otc_stocks = ["3324", "3131", "3583", "8069", "6488", "8299"] # 常見上櫃股
+    otc_stocks = ["3324", "3131", "3583", "8069", "6488", "8299"]
     for item in symbol_list:
         if not item:
             continue
@@ -172,6 +172,7 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
             
             turnover_rate = round((volume / shares) * 100, 2) if shares > 0 else 0.0
             
+            # 💡 籌碼集中度正負值視覺高亮處理
             if ".TW" in symbol or ".TWO" in symbol:
                 vol_5d_sum = volume_series.tail(5).sum()
                 net_buy_5d = inst_5d_sum.get(stock_id, 0)
@@ -179,14 +180,19 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
                     chip_concentration = round((net_buy_5d / vol_5d_sum) * 100, 2)
                 else:
                     chip_concentration = 0.0
-                chip_conc_str = f"{chip_concentration}%"
+                
+                if chip_concentration > 0:
+                    chip_conc_str = f"🔺 +{chip_concentration}%"
+                elif chip_concentration < 0:
+                    chip_conc_str = f"🔻 {chip_concentration}%"
+                else:
+                    chip_conc_str = "0.0%"
             else:
                 chip_conc_str = "N/A"
             
-            # 💡 防護型殖利率計算：優先取 trailingAnnualDividendYield，避免觸發 401 Unauthorized API 錯誤
             div_yield_raw = info.get('trailingAnnualDividendYield', 0) or info.get('dividendYield', 0) or 0
             div_yield = round(div_yield_raw * 100, 2) if div_yield_raw < 1 else round(div_yield_raw, 2)
-            if div_yield > 15.0:  # 欣興等特別股極端修正
+            if div_yield > 15.0:
                 div_yield = 1.25
             
             actual_buy_days = inst_buy_days.get(stock_id, 0) if (".TW" in symbol or ".TWO" in symbol) else 0
@@ -225,7 +231,7 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
             
     return pd.DataFrame(results)
 
-# 龍頭股清單 (已更新 3324.TWO 為上櫃)
+# 龍頭股清單
 dragon_stocks = {
     "2330.TW": "台積電", "2454.TW": "聯發科", "2303.TW": "聯電", "3034.TW": "聯詠", 
     "2379.TW": "瑞昱", "3035.TW": "智原", "3443.TW": "創意", "3661.TW": "世芯-KY",
@@ -314,8 +320,7 @@ else:
 with st.expander("💡 觀看使用說明與易經卦象解讀"):
     st.write("""
     * **股票代號連結**：點擊藍色股票代號可直接開啟 Yahoo 股市 K 線圖。
-    * **自選股設定**：左側選單提供 10 檔自選股欄位，直接輸入數字（如 2330）或英文代號（如 NVDA）即可。
-    * **籌碼集中度 (5日)**：近 5 個交易日三大法人累計淨買超張數占近 5 日總成交量的比例。
+    * **籌碼集中度 (5日)**：`🔺 +X%` 代表大戶買超吸籌，`🔻 -X%` 代表大戶賣超調節。
     * **地風升 ☷☴**：低換手量縮，籌碼極度沉澱，蓄勢待發。
     * **雷天大壯 ☳☰**：盈虧比 $> 2.0$，具備極佳的下檔防禦與上檔獲利空間。
     * **水山蹇 ☵☶**：盈虧比 $< 1.5$，代表離前高太近或停損點太遠，宜靜觀其變。
