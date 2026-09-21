@@ -22,7 +22,7 @@ st.sidebar.markdown("---")
 st.sidebar.header("⭐ 自選股設定 (可輸入股名或代號)")
 
 # 預設自選股 (支援代號或中文股名)
-default_watchlist = ["台肥", "中華電", "官田鋼", "日月光投控", "ASTS", "", "", "", "", ""]
+default_watchlist = ["台肥", "中華電", "官田鋼", "日月光投控", "ASTS", "華邦電", "南茂", "中砂", "", ""]
 
 if "user_watchlist" not in st.session_state:
     st.session_state.user_watchlist = default_watchlist
@@ -33,7 +33,7 @@ for i in range(10):
         f"自選股 {i+1}", 
         value=st.session_state.user_watchlist[i],
         key=f"watchlist_input_{i}",
-        placeholder="例如：台積電 或 2330"
+        placeholder="例如：台積電、華邦電 或 2330"
     ).strip()
     raw_watchlist_inputs.append(val)
 
@@ -106,7 +106,7 @@ def get_twse_institutional_data(days=5):
         
     return inst_consecutive, inst_net_5d_sum
 
-# 內建雙向對照字典 (代號 <-> 股名)
+# 大幅擴充台股熱門股與自選股中文對照字典
 builtin_names = {
     "1722": "台肥", "2412": "中華電", "2017": "官田鋼", "3711": "日月光投控",
     "2330": "台積電", "2454": "聯發科", "2303": "聯電", "3034": "聯詠", "2379": "瑞昱", 
@@ -115,34 +115,45 @@ builtin_names = {
     "2324": "仁寶", "3017": "奇鋐", "3324": "雙鴻", "2383": "台光電", "3037": "欣興", 
     "8046": "南電", "3189": "景碩", "2308": "台達電", "1519": "華城", "1513": "中興電", 
     "1504": "東元", "1503": "士電", "2345": "智邦", "2327": "國巨", "2408": "南亞科", 
-    "3008": "大立光", "2881": "富邦金", "2882": "國泰金", "2891": "中信金", "2603": "長榮"
+    "3008": "大立光", "2881": "富邦金", "2882": "國泰金", "2891": "中信金", "2603": "長榮",
+    # 擴充使用者新增標的
+    "1560": "中砂", "2344": "華邦電", "8150": "南茂", "2409": "友達", "3481": "群創",
+    "2337": "旺宏", "2451": "創見", "3006": "晶豪科", "3260": "威剛", "2376": "技嘉",
+    "2377": "微星", "3583": "辛耘", "3131": "弘塑", "8069": "元太", "6488": "環球晶"
 }
 
 # 建立反向對照表 (股名 -> 代號)
 name_to_code = {v: k for k, v in builtin_names.items()}
 
+# 常見上櫃股票清單
+otc_stocks = ["3324", "3131", "3583", "8069", "6488", "8299", "3260", "8044"]
+
 def format_symbol_dict(symbol_list):
-    """解析輸入的字串 (可為中文股名、數字代號或英文美股)"""
+    """強化版解析：自動將中文股名映射至 YFinance 相容代號，避開 404/401 錯誤"""
     formatted_dict = {}
-    otc_stocks = ["3324", "3131", "3583", "8069", "6488", "8299"]
     for item in symbol_list:
         if not item:
             continue
         
-        # 1. 先判斷是否為中文股名 (在反向字典中)
-        if item in name_to_code:
-            code = name_to_code[item]
+        cleaned_item = item.strip()
+        
+        # 1. 優先匹配中文股名字典
+        if cleaned_item in name_to_code:
+            code = name_to_code[cleaned_item]
             yf_symbol = f"{code}.TWO" if code in otc_stocks else f"{code}.TW"
-            name = item
-        # 2. 若為數字代號
-        elif item.replace(".TW", "").replace(".TWO", "").strip().isdigit():
-            code = item.replace(".TW", "").replace(".TWO", "").strip()
+            name = cleaned_item
+        # 2. 判斷是否為純數字股票代號 (如 2344 或 2344.TW)
+        elif cleaned_item.replace(".TW", "").replace(".TWO", "").isdigit():
+            code = cleaned_item.replace(".TW", "").replace(".TWO", "")
             yf_symbol = f"{code}.TWO" if code in otc_stocks else f"{code}.TW"
             name = builtin_names.get(code, f"台股 {code}")
-        # 3. 英文代號 (美股等)
+        # 3. 英文/美股代碼 (如 ASTS, NVDA)
+        elif cleaned_item.replace(".", "").isalpha():
+            yf_symbol = cleaned_item.upper()
+            name = cleaned_item.upper()
+        # 4. 未知的中文或無效字串 (預防性過濾，避免丟給 Yahoo 造成 Error)
         else:
-            yf_symbol = item.upper()
-            name = item.upper()
+            continue
             
         formatted_dict[yf_symbol] = name
     return formatted_dict
@@ -155,7 +166,10 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
     if not tickers:
         return pd.DataFrame()
         
-    data = yf.download(tickers, period="60d", interval="1d", progress=False)
+    try:
+        data = yf.download(tickers, period="60d", interval="1d", progress=False)
+    except Exception:
+        return pd.DataFrame()
     
     for symbol, default_name in stock_dict.items():
         stock_id = symbol.replace(".TW", "").replace(".TWO", "")
@@ -190,6 +204,7 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
             
             turnover_rate = round((volume / shares) * 100, 2) if shares > 0 else 0.0
             
+            # 籌碼集中度正負標示
             if ".TW" in symbol or ".TWO" in symbol:
                 vol_5d_sum = volume_series.tail(5).sum()
                 net_buy_5d = inst_5d_sum.get(stock_id, 0)
@@ -337,7 +352,7 @@ else:
 with st.expander("💡 觀看使用說明與易經卦象解讀"):
     st.write("""
     * **股票代號連結**：點擊藍色股票代號可直接開啟 Yahoo 股市 K 線圖。
-    * **自選股設定**：可直接輸入中文股名（如：台積電、鴻海）或數字/英文代號（如：2330、NVDA）[span_8](start_span)[span_8](end_span)[span_9](start_span)[span_9](end_span)。
+    * **自選股設定**：輸入「華邦電」、「中砂」、「南茂」等中文股名或數字/英文代號皆可解析。
     * **籌碼集中度 (5日)**：`🔺 +X%` 代表大戶買超吸籌，`🔻 -X%` 代表大戶賣超調節。
     * **地風升 ☷☴**：低換手量縮，籌碼極度沉澱，蓄勢待發。
     * **雷天大壯 ☳☰**：盈虧比 $> 2.0$，具備極佳的下檔防禦與上檔獲利空間。
