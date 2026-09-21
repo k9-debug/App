@@ -10,7 +10,7 @@ st.set_page_config(page_title="台股籌碼沉澱龍頭股監控", page_icon="�
 st.title("📊 台股籌碼沉澱 / 大戶鎖碼龍頭股監控 ☯️")
 st.caption(f"最後更新時間：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-# 側邊欄設定
+# 側邊欄條件設定
 st.sidebar.header("選股條件設定")
 min_market_cap = st.sidebar.number_input("最小市值 (億元)", value=500, step=100)
 institutional_days = st.sidebar.slider("法人連續買超天數 (至少)", 1, 5, 2)
@@ -19,19 +19,26 @@ min_yield = st.sidebar.slider("最低殖利率 % (股利下檔防禦)", 0.0, 8.0
 min_rr_ratio = st.sidebar.slider("最低預估盈虧比 (風控過濾)", 1.0, 5.0, 1.0, step=0.5)
 
 st.sidebar.markdown("---")
-st.sidebar.header("⭐ 自選股設定 (可輸入10檔)")
-w1 = st.sidebar.text_input("自選股 1", value="1722").strip().upper()
-w2 = st.sidebar.text_input("自選股 2", value="2412").strip().upper()
-w3 = st.sidebar.text_input("自選股 3", value="2017").strip().upper()
-w4 = st.sidebar.text_input("自選股 4", value="3711").strip().upper()
-w5 = st.sidebar.text_input("自選股 5", value="ASTS").strip().upper()
-w6 = st.sidebar.text_input("自選股 6", value="").strip().upper()
-w7 = st.sidebar.text_input("自選股 7", value="").strip().upper()
-w8 = st.sidebar.text_input("自選股 8", value="").strip().upper()
-w9 = st.sidebar.text_input("自選股 9", value="").strip().upper()
-w10 = st.sidebar.text_input("自選股 10", value="").strip().upper()
+st.sidebar.header("⭐ 自選股設定 (10 檔記憶清單)")
 
-raw_watchlist_inputs = [w1, w2, w3, w4, w5, w6, w7, w8, w9, w10]
+# 預設自選股
+default_watchlist = ["1722", "2412", "2017", "3711", "ASTS", "", "", "", "", ""]
+
+# 使用 Session State 記憶輸入的股票，避免刷頁時消失
+if "user_watchlist" not in st.session_state:
+    st.session_state.user_watchlist = default_watchlist
+
+raw_watchlist_inputs = []
+for i in range(10):
+    val = st.sidebar.text_input(
+        f"自選股 {i+1}", 
+        value=st.session_state.user_watchlist[i],
+        key=f"watchlist_input_{i}"
+    ).strip().upper()
+    raw_watchlist_inputs.append(val)
+
+# 同步更新 Session State
+st.session_state.user_watchlist = raw_watchlist_inputs
 
 def get_hexagram(turnover_rate, actual_buy_days, rr_ratio):
     """根據籌碼與風控指標自動對應易經卦象"""
@@ -172,7 +179,7 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
             
             turnover_rate = round((volume / shares) * 100, 2) if shares > 0 else 0.0
             
-            # 💡 籌碼集中度正紅負綠色彩高亮 (台股習慣)
+            # 💡 表格純文字直覺相容標記（正值 🔺+，負值 🔻-）
             if ".TW" in symbol or ".TWO" in symbol:
                 vol_5d_sum = volume_series.tail(5).sum()
                 net_buy_5d = inst_5d_sum.get(stock_id, 0)
@@ -182,9 +189,9 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
                     chip_concentration = 0.0
                 
                 if chip_concentration > 0:
-                    chip_conc_str = f":red[🔺 +{chip_concentration}%]"
+                    chip_conc_str = f"🔺 +{chip_concentration}%"
                 elif chip_concentration < 0:
-                    chip_conc_str = f":green[🔻 {chip_concentration}%]"
+                    chip_conc_str = f"🔻 {chip_concentration}%"
                 else:
                     chip_conc_str = "0.0%"
             else:
@@ -320,7 +327,7 @@ else:
 with st.expander("💡 觀看使用說明與易經卦象解讀"):
     st.write("""
     * **股票代號連結**：點擊藍色股票代號可直接開啟 Yahoo 股市 K 線圖。
-    * **籌碼集中度 (5日)**：`🔺 +X%` (紅字) 代表大戶買超吸籌，`🔻 -X%` (綠字) 代表大戶賣超調節[span_6](start_span)[span_6](end_span)[span_7](start_span)[span_7](end_span)[span_8](start_span)[span_8](end_span)。
+    * **籌碼集中度 (5日)**：`🔺 +X%` 代表大戶買超吸籌，`🔻 -X%` 代表大戶賣超調節。
     * **地風升 ☷☴**：低換手量縮，籌碼極度沉澱，蓄勢待發。
     * **雷天大壯 ☳☰**：盈虧比 $> 2.0$，具備極佳的下檔防禦與上檔獲利空間。
     * **水山蹇 ☵☶**：盈虧比 $< 1.5$，代表離前高太近或停損點太遠，宜靜觀其變。
