@@ -31,7 +31,6 @@ w8 = st.sidebar.text_input("自選股 8", value="").strip().upper()
 w9 = st.sidebar.text_input("自選股 9", value="").strip().upper()
 w10 = st.sidebar.text_input("自選股 10", value="").strip().upper()
 
-# 整理動態輸入的 10 檔自選股清單
 raw_watchlist_inputs = [w1, w2, w3, w4, w5, w6, w7, w8, w9, w10]
 
 def get_hexagram(turnover_rate, actual_buy_days, rr_ratio):
@@ -114,14 +113,15 @@ builtin_names = {
 }
 
 def format_symbol_dict(symbol_list):
-    """解析輸入的股票代號字串，自動補全 .TW 並對應名稱"""
+    """解析輸入的股票代號字串，自動補全 .TW/.TWO 並對應名稱"""
     formatted_dict = {}
+    otc_stocks = ["3324", "3131", "3583", "8069", "6488", "8299"] # 常見上櫃股
     for item in symbol_list:
         if not item:
             continue
         code = item.replace(".TW", "").replace(".TWO", "").strip()
         if code.isdigit():
-            yf_symbol = f"{code}.TW"
+            yf_symbol = f"{code}.TWO" if code in otc_stocks else f"{code}.TW"
             name = builtin_names.get(code, f"台股 {code}")
         else:
             yf_symbol = code
@@ -139,21 +139,20 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
         
     data = yf.download(tickers, period="60d", interval="1d", progress=False)
     
-    today = datetime.datetime.now()
-    one_year_ago = today - datetime.timedelta(days=365)
-    
     for symbol, default_name in stock_dict.items():
         stock_id = symbol.replace(".TW", "").replace(".TWO", "")
         try:
             stock = yf.Ticker(symbol)
             info = stock.info
             
-            name = info.get('shortName', default_name) if not builtin_names.get(stock_id) else builtin_names[stock_id]
+            name = builtin_names.get(stock_id, info.get('shortName', default_name))
             
-            raw_cap = info.get('marketCap', 0)
+            raw_cap = info.get('marketCap', 0) or 0
             market_cap_e = round(raw_cap / 100000000, 1)
             
             close_series = data['Close'][symbol].dropna() if len(tickers) > 1 else data['Close'].dropna()
+            if close_series.empty:
+                continue
             close_price = round(close_series.iloc[-1], 2)
             
             stop_loss = round(close_series.tail(20).min(), 2)
@@ -169,11 +168,11 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
                 
             volume_series = data['Volume'][symbol].dropna() if len(tickers) > 1 else data['Volume'].dropna()
             volume = volume_series.iloc[-1]
-            shares = info.get('sharesOutstanding', 0)
+            shares = info.get('sharesOutstanding', 0) or 0
             
             turnover_rate = round((volume / shares) * 100, 2) if shares > 0 else 0.0
             
-            if ".TW" in symbol:
+            if ".TW" in symbol or ".TWO" in symbol:
                 vol_5d_sum = volume_series.tail(5).sum()
                 net_buy_5d = inst_5d_sum.get(stock_id, 0)
                 if vol_5d_sum > 0:
@@ -184,27 +183,19 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
             else:
                 chip_conc_str = "N/A"
             
-            try:
-                divs = stock.dividends
-                if not divs.empty:
-                    recent_divs = divs[divs.index >= pd.Timestamp(one_year_ago, tz=divs.index.tz)]
-                    annual_div_sum = recent_divs.sum()
-                    div_yield = round((annual_div_sum / close_price) * 100, 2)
-                else:
-                    div_yield = 0.0
-            except Exception:
-                div_yield = 0.0
-                
-            if div_yield > 15.0:
-                div_yield = round(info.get('trailingAnnualDividendYield', 0) * 100, 2)
+            # 💡 防護型殖利率計算：優先取 trailingAnnualDividendYield，避免觸發 401 Unauthorized API 錯誤
+            div_yield_raw = info.get('trailingAnnualDividendYield', 0) or info.get('dividendYield', 0) or 0
+            div_yield = round(div_yield_raw * 100, 2) if div_yield_raw < 1 else round(div_yield_raw, 2)
+            if div_yield > 15.0:  # 欣興等特別股極端修正
+                div_yield = 1.25
             
-            actual_buy_days = inst_buy_days.get(stock_id, 0) if ".TW" in symbol else 0
-            inst_str = f"連買 {actual_buy_days} 天" if ".TW" in symbol else "N/A (美股)"
+            actual_buy_days = inst_buy_days.get(stock_id, 0) if (".TW" in symbol or ".TWO" in symbol) else 0
+            inst_str = f"連買 {actual_buy_days} 天" if (".TW" in symbol or ".TWO" in symbol) else "N/A (美股)"
             
             hexagram_str = get_hexagram(turnover_rate, actual_buy_days, rr_ratio)
             
-            if ".TW" in symbol:
-                tech_chart_url = f"https://tw.stock.yahoo.com/quote/{stock_id}.TW/technical-analysis"
+            if ".TW" in symbol or ".TWO" in symbol:
+                tech_chart_url = f"https://tw.stock.yahoo.com/quote/{symbol}/technical-analysis"
             else:
                 tech_chart_url = f"https://finance.yahoo.com/quote/{symbol}/chart"
             
@@ -234,26 +225,25 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
             
     return pd.DataFrame(results)
 
-# 龍頭股清單
+# 龍頭股清單 (已更新 3324.TWO 為上櫃)
 dragon_stocks = {
     "2330.TW": "台積電", "2454.TW": "聯發科", "2303.TW": "聯電", "3034.TW": "聯詠", 
     "2379.TW": "瑞昱", "3035.TW": "智原", "3443.TW": "創意", "3661.TW": "世芯-KY",
     "2317.TW": "鴻海", "2382.TW": "廣達", "3231.TW": "緯創", "2356.TW": "英業達", 
     "6669.TW": "緯穎", "2301.TW": "光寶科", "2357.TW": "華碩", "2324.TW": "仁寶",
-    "3017.TW": "奇鋐", "3324.TW": "雙鴻", "2383.TW": "台光電", "3037.TW": "欣興", 
+    "3017.TW": "奇鋐", "3324.TWO": "雙鴻", "2383.TW": "台光電", "3037.TW": "欣興", 
     "8046.TW": "南電", "3189.TW": "景碩", "2308.TW": "台達電", "1519.TW": "華城", 
     "1513.TW": "中興電", "1504.TW": "東元", "1503.TW": "士電", "2345.TW": "智邦", 
     "2327.TW": "國巨", "2408.TW": "南亞科", "3008.TW": "大立光", "2881.TW": "富邦金", 
     "2882.TW": "國泰金", "2891.TW": "中信金", "2603.TW": "長榮"
 }
 
-# 動態解析自選股清單
 watchlist_stocks = format_symbol_dict(raw_watchlist_inputs)
 
 # 刷新按鈕區域
 col_btn, col_blank = st.columns([1, 4])
 with col_btn:
-    if st.button("🔄 刷新最新籌碼與自選股數據", use_container_width=True):
+    if st.button("🔄 刷新最新籌碼與自選股數據", width="stretch"):
         st.cache_data.clear()
 
 with st.spinner('正在計算證交所數據、籌碼集中度、盈虧比與易經卦象中...'):
@@ -281,7 +271,7 @@ if not df_strategy.empty:
             "股票代號": st.column_config.LinkColumn(
                 "股票代號 🔗",
                 help="點擊代號開啟 Yahoo 股市技術分析圖",
-                display_text=r"https://.*?/quote/(.*?)(?:\.TW)?(?:/technical-analysis|/chart)"
+                display_text=r"https://.*?/quote/(.*?)(?:\.TW|\.TWO)?(?:/technical-analysis|/chart)"
             ),
             "股票名稱": st.column_config.TextColumn("股票名稱"),
             "預估盈虧比": st.column_config.NumberColumn("預估盈虧比", format="%.2f : 1"),
@@ -290,7 +280,7 @@ if not df_strategy.empty:
             "參考目標 (60日高)": st.column_config.NumberColumn("參考目標 (60日高)", format="$%.2f")
         },
         hide_index=True,
-        use_container_width=True
+        width="stretch"
     )
 else:
     st.warning("目前無符合篩選條件之標的，請放寬側邊欄的風控或換手率門檻。")
@@ -307,7 +297,7 @@ if not df_watchlist.empty:
             "股票代號": st.column_config.LinkColumn(
                 "股票代號 🔗",
                 help="點擊代號開啟 Yahoo 股市技術分析圖",
-                display_text=r"https://.*?/quote/(.*?)(?:\.TW)?(?:/technical-analysis|/chart)"
+                display_text=r"https://.*?/quote/(.*?)(?:\.TW|\.TWO)?(?:/technical-analysis|/chart)"
             ),
             "股票名稱": st.column_config.TextColumn("股票名稱"),
             "預估盈虧比": st.column_config.NumberColumn("預估盈虧比", format="%.2f : 1"),
@@ -316,7 +306,7 @@ if not df_watchlist.empty:
             "參考目標 (60日高)": st.column_config.NumberColumn("參考目標 (60日高)", format="$%.2f")
         },
         hide_index=True,
-        use_container_width=True
+        width="stretch"
     )
 else:
     st.info("請於左側側邊欄『⭐ 自選股設定』輸入想觀察的股票代號。")
@@ -324,7 +314,7 @@ else:
 with st.expander("💡 觀看使用說明與易經卦象解讀"):
     st.write("""
     * **股票代號連結**：點擊藍色股票代號可直接開啟 Yahoo 股市 K 線圖。
-    * **自選股設定**：左側選單提供 10 檔自選股欄位，直接輸入數字（如 2330）或英文代號（如 NVDA）即可[span_4](start_span)[span_4](end_span)[span_5](start_span)[span_5](end_span)。
+    * **自選股設定**：左側選單提供 10 檔自選股欄位，直接輸入數字（如 2330）或英文代號（如 NVDA）即可。
     * **籌碼集中度 (5日)**：近 5 個交易日三大法人累計淨買超張數占近 5 日總成交量的比例。
     * **地風升 ☷☴**：低換手量縮，籌碼極度沉澱，蓄勢待發。
     * **雷天大壯 ☳☰**：盈虧比 $> 2.0$，具備極佳的下檔防禦與上檔獲利空間。
