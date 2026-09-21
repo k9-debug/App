@@ -33,8 +33,9 @@ def get_hexagram(turnover_rate, actual_buy_days, rr_ratio):
 
 @st.cache_data(ttl=3600)
 def get_twse_institutional_data(days=5):
-    """抓取證交所近 N 個交易日的三大法人買賣超資料"""
-    inst_data = {}
+    """抓取證交所近 N 個交易日的三大法人買賣超資料與累計淨買超"""
+    inst_consecutive = {}
+    inst_net_5d_sum = {}
     today = datetime.date.today()
     fetched_days = 0
     check_date = today
@@ -73,19 +74,22 @@ def get_twse_institutional_data(days=5):
         check_date -= datetime.timedelta(days=1)
         
     for stock_id, records in daily_buy_records.items():
+        # 計算連買天數
         consecutive = 0
         for net in records:
             if net > 0:
                 consecutive += 1
             else:
                 break
-        inst_data[stock_id] = consecutive
+        inst_consecutive[stock_id] = consecutive
+        # 近 5 日法人買賣超張數累加
+        inst_net_5d_sum[stock_id] = sum(records)
         
-    return inst_data
+    return inst_consecutive, inst_net_5d_sum
 
 @st.cache_data(ttl=3600)
-def get_stock_analysis_data(stock_dict, inst_buy_days, is_watchlist=False, min_cap=0, req_inst_days=0, max_turnover_rate=99, req_min_yield=0, req_min_rr=0):
-    """計算股票清單的詳細技術、籌碼與風控數據"""
+def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist=False, min_cap=0, req_inst_days=0, max_turnover_rate=99, req_min_yield=0, req_min_rr=0):
+    """計算股票清單的詳細技術、籌碼、籌碼集中度與風控數據"""
     results = []
     tickers = list(stock_dict.keys())
     data = yf.download(tickers, period="60d", interval="1d", progress=False)
@@ -121,13 +125,25 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, is_watchlist=False, min_c
             volume = volume_series.iloc[-1]
             shares = info.get('sharesOutstanding', 0)
             
+            # 換手率
             turnover_rate = round((volume / shares) * 100, 2) if shares > 0 else 0.0
             
-            # 💡 精準殖利率計算：抓取過去 365 天真實配息紀錄累加，避免 API 異常
+            # 💡 計算 5 日籌碼集中度 % = (近5日法人買賣超股數總和 / 近5日總成交股數總和) * 100
+            if ".TW" in symbol:
+                vol_5d_sum = volume_series.tail(5).sum()
+                net_buy_5d = inst_5d_sum.get(stock_id, 0) # 證交所單位為股
+                if vol_5d_sum > 0:
+                    chip_concentration = round((net_buy_5d / vol_5d_sum) * 100, 2)
+                else:
+                    chip_concentration = 0.0
+                chip_conc_str = f"{chip_concentration}%"
+            else:
+                chip_conc_str = "N/A"
+            
+            # 精準殖利率計算
             try:
                 divs = stock.dividends
                 if not divs.empty:
-                    # 篩選出近一年的配息記錄
                     recent_divs = divs[divs.index >= pd.Timestamp(one_year_ago, tz=divs.index.tz)]
                     annual_div_sum = recent_divs.sum()
                     div_yield = round((annual_div_sum / close_price) * 100, 2)
@@ -136,7 +152,6 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, is_watchlist=False, min_c
             except Exception:
                 div_yield = 0.0
                 
-            # 極端異常值保護（防止未預期的數據錯誤）
             if div_yield > 15.0:
                 div_yield = round(info.get('trailingAnnualDividendYield', 0) * 100, 2)
             
@@ -165,8 +180,9 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, is_watchlist=False, min_c
                     "當前價": close_price,
                     "預估盈虧比": rr_ratio,
                     "易經卦象": hexagram_str,
-                    "換手率 (%)": f"{turnover_rate}%",
+                    "籌碼集中度 (5日)": chip_conc_str,
                     "三大法人動向": inst_str,
+                    "換手率 (%)": f"{turnover_rate}%",
                     "參考停損 (20日低)": stop_loss,
                     "參考目標 (60日高)": target_price,
                     "殖利率 (%)": f"{div_yield}%",
@@ -205,10 +221,10 @@ with col_btn:
     if st.button("🔄 刷新最新籌碼與自選股數據", use_container_width=True):
         st.cache_data.clear()
 
-with st.spinner('正在計算證交所數據、盈虧比與易經卦象中...'):
-    inst_buy_days = get_twse_institutional_data(days=5)
-    df_strategy = get_stock_analysis_data(dragon_stocks, inst_buy_days, False, min_market_cap, institutional_days, max_turnover, min_yield, min_rr_ratio)
-    df_watchlist = get_stock_analysis_data(watchlist_stocks, inst_buy_days, True)
+with st.spinner('正在計算證交所數據、籌碼集中度、盈虧比與易經卦象中...'):
+    inst_buy_days, inst_5d_sum = get_twse_institutional_data(days=5)
+    df_strategy = get_stock_analysis_data(dragon_stocks, inst_buy_days, inst_5d_sum, False, min_market_cap, institutional_days, max_turnover, min_yield, min_rr_ratio)
+    df_watchlist = get_stock_analysis_data(watchlist_stocks, inst_buy_days, inst_5d_sum, True)
 
 # --- 區塊 1：策略篩選結果 ---
 st.subheader("📌 籌碼沉澱龍頭股篩選結果")
@@ -271,6 +287,7 @@ if not df_watchlist.empty:
 with st.expander("💡 觀看使用說明與易經卦象解讀"):
     st.write("""
     * **股票代號連結**：點擊藍色股票代號可直接開啟 Yahoo 股市 K 線圖。
+    * **籌碼集中度 (5日)**：近 5 個交易日三大法人累計淨買超張數占近 5 日總成交量的比例。% 越高代表大戶控盤越緊密。
     * **地風升 ☷☴**：低換手量縮，籌碼極度沉澱，蓄勢待發。
     * **雷天大壯 ☳☰**：盈虧比 $> 2.0$，具備極佳的下檔防禦與上檔獲利空間。
     * **水山蹇 ☵☶**：盈虧比 $< 1.5$，代表離前高太近或停損點太遠，宜靜觀其變。
