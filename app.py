@@ -18,6 +18,22 @@ max_turnover = st.sidebar.slider("換手率上限 % (洗盤沉澱量縮)", 0.1, 
 min_yield = st.sidebar.slider("最低殖利率 % (股利下檔防禦)", 0.0, 8.0, 0.0, step=0.5)
 min_rr_ratio = st.sidebar.slider("最低預估盈虧比 (風控過濾)", 1.0, 5.0, 1.0, step=0.5)
 
+st.sidebar.markdown("---")
+st.sidebar.header("⭐ 自選股設定 (可輸入10檔)")
+w1 = st.sidebar.text_input("自選股 1", value="1722").strip().upper()
+w2 = st.sidebar.text_input("自選股 2", value="2412").strip().upper()
+w3 = st.sidebar.text_input("自選股 3", value="2017").strip().upper()
+w4 = st.sidebar.text_input("自選股 4", value="3711").strip().upper()
+w5 = st.sidebar.text_input("自選股 5", value="ASTS").strip().upper()
+w6 = st.sidebar.text_input("自選股 6", value="").strip().upper()
+w7 = st.sidebar.text_input("自選股 7", value="").strip().upper()
+w8 = st.sidebar.text_input("自選股 8", value="").strip().upper()
+w9 = st.sidebar.text_input("自選股 9", value="").strip().upper()
+w10 = st.sidebar.text_input("自選股 10", value="").strip().upper()
+
+# 整理動態輸入的 10 檔自選股清單
+raw_watchlist_inputs = [w1, w2, w3, w4, w5, w6, w7, w8, w9, w10]
+
 def get_hexagram(turnover_rate, actual_buy_days, rr_ratio):
     """根據籌碼與風控指標自動對應易經卦象"""
     if actual_buy_days >= 4 and turnover_rate >= 1.0:
@@ -74,7 +90,6 @@ def get_twse_institutional_data(days=5):
         check_date -= datetime.timedelta(days=1)
         
     for stock_id, records in daily_buy_records.items():
-        # 計算連買天數
         consecutive = 0
         for net in records:
             if net > 0:
@@ -82,28 +97,59 @@ def get_twse_institutional_data(days=5):
             else:
                 break
         inst_consecutive[stock_id] = consecutive
-        # 近 5 日法人買賣超張數累加
         inst_net_5d_sum[stock_id] = sum(records)
         
     return inst_consecutive, inst_net_5d_sum
+
+# 內建台股對照字典
+builtin_names = {
+    "1722": "台肥", "2412": "中華電", "2017": "官田鋼", "3711": "日月光投控",
+    "2330": "台積電", "2454": "聯發科", "2303": "聯電", "3034": "聯詠", "2379": "瑞昱", 
+    "3035": "智原", "3443": "創意", "3661": "世芯-KY", "2317": "鴻海", "2382": "廣達", 
+    "3231": "緯創", "2356": "英業達", "6669": "緯穎", "2301": "光寶科", "2357": "華碩", 
+    "2324": "仁寶", "3017": "奇鋐", "3324": "雙鴻", "2383": "台光電", "3037": "欣興", 
+    "8046": "南電", "3189": "景碩", "2308": "台達電", "1519": "華城", "1513": "中興電", 
+    "1504": "東元", "1503": "士電", "2345": "智邦", "2327": "國巨", "2408": "南亞科", 
+    "3008": "大立光", "2881": "富邦金", "2882": "國泰金", "2891": "中信金", "2603": "長榮"
+}
+
+def format_symbol_dict(symbol_list):
+    """解析輸入的股票代號字串，自動補全 .TW 並對應名稱"""
+    formatted_dict = {}
+    for item in symbol_list:
+        if not item:
+            continue
+        code = item.replace(".TW", "").replace(".TWO", "").strip()
+        if code.isdigit():
+            yf_symbol = f"{code}.TW"
+            name = builtin_names.get(code, f"台股 {code}")
+        else:
+            yf_symbol = code
+            name = code
+        formatted_dict[yf_symbol] = name
+    return formatted_dict
 
 @st.cache_data(ttl=3600)
 def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist=False, min_cap=0, req_inst_days=0, max_turnover_rate=99, req_min_yield=0, req_min_rr=0):
     """計算股票清單的詳細技術、籌碼、籌碼集中度與風控數據"""
     results = []
     tickers = list(stock_dict.keys())
+    if not tickers:
+        return pd.DataFrame()
+        
     data = yf.download(tickers, period="60d", interval="1d", progress=False)
     
     today = datetime.datetime.now()
     one_year_ago = today - datetime.timedelta(days=365)
     
-    for symbol, name in stock_dict.items():
-        stock_id = symbol.replace(".TW", "")
+    for symbol, default_name in stock_dict.items():
+        stock_id = symbol.replace(".TW", "").replace(".TWO", "")
         try:
             stock = yf.Ticker(symbol)
             info = stock.info
             
-            # 市值計算 (億元)
+            name = info.get('shortName', default_name) if not builtin_names.get(stock_id) else builtin_names[stock_id]
+            
             raw_cap = info.get('marketCap', 0)
             market_cap_e = round(raw_cap / 100000000, 1)
             
@@ -125,13 +171,11 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
             volume = volume_series.iloc[-1]
             shares = info.get('sharesOutstanding', 0)
             
-            # 換手率
             turnover_rate = round((volume / shares) * 100, 2) if shares > 0 else 0.0
             
-            # 💡 計算 5 日籌碼集中度 % = (近5日法人買賣超股數總和 / 近5日總成交股數總和) * 100
             if ".TW" in symbol:
                 vol_5d_sum = volume_series.tail(5).sum()
-                net_buy_5d = inst_5d_sum.get(stock_id, 0) # 證交所單位為股
+                net_buy_5d = inst_5d_sum.get(stock_id, 0)
                 if vol_5d_sum > 0:
                     chip_concentration = round((net_buy_5d / vol_5d_sum) * 100, 2)
                 else:
@@ -140,7 +184,6 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
             else:
                 chip_conc_str = "N/A"
             
-            # 精準殖利率計算
             try:
                 divs = stock.dividends
                 if not divs.empty:
@@ -160,13 +203,11 @@ def get_stock_analysis_data(stock_dict, inst_buy_days, inst_5d_sum, is_watchlist
             
             hexagram_str = get_hexagram(turnover_rate, actual_buy_days, rr_ratio)
             
-            # K 線圖連結
             if ".TW" in symbol:
                 tech_chart_url = f"https://tw.stock.yahoo.com/quote/{stock_id}.TW/technical-analysis"
             else:
                 tech_chart_url = f"https://finance.yahoo.com/quote/{symbol}/chart"
             
-            # 篩選邏輯
             if is_watchlist or (
                 market_cap_e >= min_cap and 
                 turnover_rate <= max_turnover_rate and 
@@ -206,14 +247,8 @@ dragon_stocks = {
     "2882.TW": "國泰金", "2891.TW": "中信金", "2603.TW": "長榮"
 }
 
-# 自訂觀察股清單
-watchlist_stocks = {
-    "1722.TW": "台肥",
-    "2412.TW": "中華電",
-    "2017.TW": "官田鋼",
-    "3711.TW": "日月光投控",
-    "ASTS": "AST SpaceMobile"
-}
+# 動態解析自選股清單
+watchlist_stocks = format_symbol_dict(raw_watchlist_inputs)
 
 # 刷新按鈕區域
 col_btn, col_blank = st.columns([1, 4])
@@ -224,7 +259,7 @@ with col_btn:
 with st.spinner('正在計算證交所數據、籌碼集中度、盈虧比與易經卦象中...'):
     inst_buy_days, inst_5d_sum = get_twse_institutional_data(days=5)
     df_strategy = get_stock_analysis_data(dragon_stocks, inst_buy_days, inst_5d_sum, False, min_market_cap, institutional_days, max_turnover, min_yield, min_rr_ratio)
-    df_watchlist = get_stock_analysis_data(watchlist_stocks, inst_buy_days, inst_5d_sum, True)
+    df_watchlist = get_stock_analysis_data(watchlist_stocks, inst_buy_days, inst_5d_sum, True) if watchlist_stocks else pd.DataFrame()
 
 # --- 區塊 1：策略篩選結果 ---
 st.subheader("📌 籌碼沉澱龍頭股篩選結果")
@@ -283,11 +318,14 @@ if not df_watchlist.empty:
         hide_index=True,
         use_container_width=True
     )
+else:
+    st.info("請於左側側邊欄『⭐ 自選股設定』輸入想觀察的股票代號。")
 
 with st.expander("💡 觀看使用說明與易經卦象解讀"):
     st.write("""
     * **股票代號連結**：點擊藍色股票代號可直接開啟 Yahoo 股市 K 線圖。
-    * **籌碼集中度 (5日)**：近 5 個交易日三大法人累計淨買超張數占近 5 日總成交量的比例。% 越高代表大戶控盤越緊密。
+    * **自選股設定**：左側選單提供 10 檔自選股欄位，直接輸入數字（如 2330）或英文代號（如 NVDA）即可[span_4](start_span)[span_4](end_span)[span_5](start_span)[span_5](end_span)。
+    * **籌碼集中度 (5日)**：近 5 個交易日三大法人累計淨買超張數占近 5 日總成交量的比例。
     * **地風升 ☷☴**：低換手量縮，籌碼極度沉澱，蓄勢待發。
     * **雷天大壯 ☳☰**：盈虧比 $> 2.0$，具備極佳的下檔防禦與上檔獲利空間。
     * **水山蹇 ☵☶**：盈虧比 $< 1.5$，代表離前高太近或停損點太遠，宜靜觀其變。
